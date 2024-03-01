@@ -1,0 +1,184 @@
+---
+title: "SeniorWeek"
+output: html_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+if(!require(dplyr)) {install.packages("dplyr"); library(dplyr)}
+if(!require(tidyverse)) {install.packages("tidyverse"); library(tidyverse)}
+if(!require(rvest)) {install.packages("rvest"); library(rvest)}
+if(!require(RSelenium)) {install.packages("RSelenium"); library(RSelenium)}
+if(!require(wdman)) {install.packages("wdman"); library(wdman)}
+if(!require(netstat)) {install.packages("netstat"); library(netstat)}
+if(!require(xml2)) {install.packages("xml2"); library(xml2)}
+if(!require(webdriver)) {install.packages("webdriver"); library(webdriver)}
+if(!require(purrr)) {install.packages("purrr"); library(purrr)}
+if(!require(readr)) {install.packages("readr"); library(readr)}
+if (!require(usethis)) {install.packages("usethis"); library("usethis")}
+if (!require(dotenv)) {install.packages("dotenv"); library("dotenv")}
+if (!require(here)) {install.packages("here"); library("here")}
+if (!require(gmailr)) {install.packages("gmailr"); library(gmailr)}
+if(!require(gptstudio)) {install.packages("gptstudio"); library(gptstudio)}
+setwd(here())
+```
+
+```{r}
+# Change to TRUE if emails haven't yet been webscraped
+emails = FALSE
+
+if (emails == TRUE) {
+  data <- read.csv("./data/Spring 24 Grad Senior.csv")
+  # Start the Selenium server with a free port (e.g., 4567)
+  rD <- rsDriver(browser = "firefox", chromever = NULL, port = netstat::free_port())
+  remDr <- rD$client
+  
+  pages <- vector("list", length = nrow(data)) # Initialize a list to store page content
+  
+  for (i in {142}) {
+    # Navigate to the website
+    remDr$navigate("https://dir.unc.edu/")
+    
+    # Find the input element (Ensure the selector is correct)
+    PID <- remDr$findElement(using = 'css', value = 'input[id="input-15"]') # Update the value to the correct name attribute of the input field
+    Sys.sleep(2.1)
+    # Send PID to the input element and press enter
+    PID$sendKeysToElement(list(as.character(data$PID[i]), key = "enter"))
+    
+    Sys.sleep(1.1) # Short wait after submitting
+    
+    # Get the page source and read it with rvest
+    page_raw <- remDr$getPageSource()
+    html_raw <- read_html(page_raw[[1]])
+    pages[[i]] <- html_raw
+  }
+  
+  # Initialize vectors to store emails, phone numbers, and majors
+  emails <- vector("character", length = nrow(data))
+  phone_numbers <- vector("character", length = nrow(data))
+  majors <- vector("character", length = nrow(data))
+  
+  for (i in seq_along(pages)) {
+    # Extract email addresses from each page
+    email <- pages[[i]] %>% 
+      html_nodes("a[href^='mailto:']") %>% 
+      html_attr("href") %>% 
+      gsub("mailto:", "", .)
+    emails[i] <- email
+    
+    # Extract phone numbers from each page
+    phone <- pages[[i]] %>% 
+      html_nodes("a[href^='tel:']") %>% 
+      html_text() # Here we use html_text to get the visible phone number
+    # Check if a phone number is found; assign NA if not
+    phone_numbers[i] <- ifelse(length(phone) > 0, phone, NA)  # Assign NA if no phone number is found
+    
+    major_info <- pages[[i]] %>%
+      html_nodes(xpath = "//h3[contains(., 'Major')]/following-sibling::text()[1]") %>%
+      html_text() %>%
+      trimws()  # Trim whitespace
+    majors[i] <- major_info
+  }
+  
+  # Add emails to the data frame
+  senior_info <- data
+  senior_info$Emails <- emails
+  senior_info$PhoneNumbers <- phone_numbers
+  senior_info$Majors <- majors
+  
+  # Clean up the RSelenium session
+  remDr$close()
+  rD$server$stop()
+  write.csv(senior_info, "./data/[FINAL] Spring 24 Grad Senior.csv", row.names = FALSE)
+}
+data <- read.csv("./data/[FINAL] Spring 24 Grad Senior.csv")
+
+gm_auth_configure(path = "[CTE]GmailCredentials.json")
+gm_auth(email = T, cache = ".secret")
+
+check_for_sending_limit_reached <- function() {
+    my_messages <- gm_threads(num_results = 1) # Adjust num_results as needed
+    if (any(grepl("You have reached a limit for sending mail. Your message was not sent.", unlist(my_messages[[1]]$threads), fixed = TRUE))) {
+      return(TRUE) # Sending limit indication found
+    }
+    else {
+      return(FALSE) # No sending limit indication found
+    }
+}
+
+#start_index <- match("Radio Control Club at UNC-CH", contacts_grouped$Organization) + 1
+data[1,]
+start_index <- 1
+for(i in start_index:1) {
+  #Sys.sleep(0.5)
+  if (i %% 10 == 0 & check_for_sending_limit_reached()) {
+      print("Limit for sending mail has been reached. Halting email sending.")
+      break # Stop the loop if a sending limit is reached
+  }
+  
+  #to <- data$Emails[i]
+  to <- "riley.harper@unc.edu"
+  major <- data$Majors[i]
+  firstname <- data$Name.First[i]
+  send <- "admin@chapelthrillescapes.com"
+  my_name <- "Riley Harper"
+  my_email <- "admin@chapelthrillescapes.com"
+    
+  email <- gm_mime() %>%
+    gm_to(to) %>%
+    gm_from(send) %>%
+    gm_subject("UNC Senior Event for Chapel Thrill Escapes") %>%
+    gm_attach_file("/Users/riley/Downloads/cte_tri_color (1).png", type = "image/png", id = "YourImageContentID") %>%
+    #gm_attach_file("", type = "application/pdf", id = "YourImageContentID1") %>%
+    gm_html_body(paste0(
+    "<html>
+    <head>
+    <style>
+    body { 
+      font-family: 'Times New Roman', Times, serif; 
+      font-size: 12pt; 
+      color: black; 
+    }
+    </style>
+    </head>
+    <body>
+      <p>Good Evening,</p>
+      
+      <p>I hope you're having a great week ", firstname," and congratulations on your upcoming graduation this Spring. My name is ", my_name, ", and I am the CEO of Chapel Thrill Escapes–a student-run escape room experience based on-campus at UNC-Chapel Hill. We're planning to hold a senior week from ... to ... to celebrate the graduating seniors. Our escape rooms are designed to challenge and engage participants, promoting teamwork, problem-solving, and a healthy dose of fun. They provide an excellent way for you and friends to bond and develop essential skills in a thrilling environment.</p>
+      
+      <h3>Group Booking Details:</h3>
+      <ul>
+        <li><strong>Date & Time:</strong> We are flexible and have many times listed on our booking page. In particular, we have opened an entire week of bookings for senior week on the week of ...</li>
+        <li><strong>Group Size:</strong> Our Ramses in Wonderland room can accommodate groups of up to 8 people, and The Lost Tar Heel room can accommodate groups of up to 10 people. For larger groups, we can organize multiple rooms.</li>
+        <li><strong>Special Arrangements:</strong> If you have any specific requirements or requests such as a larger group booking, we are more than happy to discuss further over Zoom or email.</li>
+      </ul>
+      <h3>Booking Process:</h3>
+      <ol>
+        <li>Choose your preferred date and time <a href='https://www.chapelthrillescapes.com/book'>here</a>.</li>
+        <li>We will confirm availability.</li>
+        <li>Once confirmed, we will provide you with all the necessary information and preparations for your adventure.</li>
+      </ol>
+      <h3>Why Choose Chapel Thrill Escapes?</h3>
+      <ul>
+        <li>Unique, immersive, and <strong>affordable</strong> escape room experiences.</li>
+        <li>Perfect for team-building, enhancing communication, and leadership skills.</li>
+        <li>Professionally designed challenges that cater to all skill levels.</li>
+        <li>Convenient location and flexible scheduling.</li>
+      </ul>
+      <p>We would be delighted to have more ", major, " majors give our escape rooms a try. This is a great opportunity for you to step out of your regular environment and engage in a unique, fun, and intellectually stimulating experience. To proceed with the booking or if you have any questions, please feel free to contact our executive team at ", my_email, ". We are also available to discuss any specific requirements or customization you might need to make your group’s experience truly memorable. Thank you for considering Chapel Thrill Escapes for our senior week event. We look forward to the possibility of hosting you and providing an unforgettable escape room adventure.</p>
+      <p>Best,</p>
+      <p><strong>", my_name, "</strong><br>
+      CEO of Chapel Thrill Escapes<br>
+      <p></p>
+      <a href='https://www.chapelthrillescapes.com/'><img src='cid:YourImageContentID' width='100'></a><br>
+      <strong>Chapel Thrill Escapes</strong><br>
+      <strong>Address:</strong> 100 Country Club Rd,<br> Chapel Hill, NC 27514</p>
+      <strong>Primary Email:</strong> <a href='mailto:admin@chapelthrillescapes.com'>admin@chapelthrillescapes.com</a><br>
+      <strong>Secondary Email:</strong> <a href='mailto:riley.harper@unc.edu'>riley.harper@unc.edu</a><br>
+      <strong>Website:</strong> <a href='https://www.chapelthrillescapes.com/'>chapelthrillescapes.com</a>
+    </body>
+    </html>"))
+  gm_send_message(email)
+}
+print(paste("Last emailed group index:", i))
+```
